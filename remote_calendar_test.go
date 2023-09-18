@@ -34,7 +34,7 @@ func newTestDigest(in string) []byte {
 
 func TestRemoteCalendarExample(t *testing.T) {
 	dts, err := NewDetachedTimestampFromPath(
-		"../examples/two-calendars.txt.ots",
+		"./examples/two-calendars.txt.ots",
 	)
 	require.NoError(t, err)
 

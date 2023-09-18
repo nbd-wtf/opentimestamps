@@ -11,7 +11,7 @@ import (
 )
 
 func examplePaths() []string {
-	matches, err := filepath.Glob("../examples/*ots")
+	matches, err := filepath.Glob("./examples/*ots")
 	if err != nil {
 		panic(err)
 	}
@@ -31,7 +31,7 @@ func containsUnknownAttestation(ts *Timestamp) (res bool) {
 
 func TestDecodeHelloWorld(t *testing.T) {
 	dts, err := NewDetachedTimestampFromPath(
-		"../examples/hello-world.txt.ots",
+		"./examples/hello-world.txt.ots",
 	)
 	assert.NoError(t, err)
 

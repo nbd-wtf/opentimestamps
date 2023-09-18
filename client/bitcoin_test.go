@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fiatjaf/opentimestamps"
 	"github.com/btcsuite/btcd/rpcclient"
+	"github.com/fiatjaf/opentimestamps"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,7 +56,7 @@ func TestVerifyHelloWorld(t *testing.T) {
 	expectedTime := "2015-05-28T15:41:18Z"
 
 	helloWorld, err := opentimestamps.NewDetachedTimestampFromPath(
-		"../../examples/hello-world.txt.ots",
+		"../examples/hello-world.txt.ots",
 	)
 	require.NoError(t, err)
 	ts := helloWorld.Timestamp
