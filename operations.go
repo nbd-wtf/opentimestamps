@@ -1,12 +1,9 @@
 package opentimestamps
 
 import (
-	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-
-	"golang.org/x/crypto/ripemd160"
 )
 
 const maxResultLength = 4096
@@ -49,25 +46,6 @@ func msgHexlify(msg []byte) ([]byte, error) {
 	return []byte(hex.EncodeToString(msg)), nil
 }
 
-func msgSHA1(msg []byte) ([]byte, error) {
-	res := sha1.Sum(msg)
-	return res[:], nil
-}
-
-func msgRIPEMD160(msg []byte) ([]byte, error) {
-	h := ripemd160.New()
-	_, err := h.Write(msg)
-	if err != nil {
-		return nil, err
-	}
-	return h.Sum([]byte{}), nil
-}
-
-func msgSHA256(msg []byte) ([]byte, error) {
-	res := sha256.Sum256(msg)
-	return res[:], nil
-}
-
 type opCode interface {
 	match(byte) bool
 	decode(*deserializationContext) (opCode, error)
@@ -108,30 +86,6 @@ func (u *unaryOp) encode(ctx *serializationContext) error {
 
 func (u *unaryOp) apply(message []byte) ([]byte, error) {
 	return u.msgOp(message)
-}
-
-// Crypto operations
-// These are hash ops that define a digest length
-type cryptOp struct {
-	unaryOp
-	digestLength int
-}
-
-func newCryptOp(
-	tag byte, name string, msgOp unaryMsgOp, digestLength int,
-) *cryptOp {
-	return &cryptOp{
-		unaryOp:      *newUnaryOp(tag, name, msgOp),
-		digestLength: digestLength,
-	}
-}
-
-func (c *cryptOp) decode(ctx *deserializationContext) (opCode, error) {
-	u, err := c.unaryOp.decode(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &cryptOp{*u.(*unaryOp), c.digestLength}, nil
 }
 
 // Binary operations
@@ -179,20 +133,20 @@ func (b *binaryOp) String() string {
 	return fmt.Sprintf("%s %x", b.name, b.argument)
 }
 
+func msgSHA256(msg []byte) ([]byte, error) {
+	res := sha256.Sum256(msg)
+	return res[:], nil
+}
+
 var (
-	opAppend    = newBinaryOp(0xf0, "APPEND", msgAppend)
-	opPrepend   = newBinaryOp(0xf1, "PREPEND", msgPrepend)
-	opReverse   = newUnaryOp(0xf2, "REVERSE", msgReverse)
-	opHexlify   = newUnaryOp(0xf3, "HEXLIFY", msgHexlify)
-	opSHA1      = newCryptOp(0x02, "SHA1", msgSHA1, 20)
-	opRIPEMD160 = newCryptOp(0x03, "RIPEMD160", msgRIPEMD160, 20)
-	opSHA256    = newCryptOp(0x08, "SHA256", msgSHA256, 32)
+	opAppend  = newBinaryOp(0xf0, "APPEND", msgAppend)
+	opPrepend = newBinaryOp(0xf1, "PREPEND", msgPrepend)
+	opReverse = newUnaryOp(0xf2, "REVERSE", msgReverse)
+	opHexlify = newUnaryOp(0xf3, "HEXLIFY", msgHexlify)
+	opSHA256  = newUnaryOp(0x08, "SHA256", msgSHA256)
 )
 
-var opCodes []opCode = []opCode{
-	opAppend, opPrepend, opReverse, opHexlify, opSHA1, opRIPEMD160,
-	opSHA256,
-}
+var opCodes []opCode = []opCode{opAppend, opPrepend, opReverse, opHexlify, opSHA256}
 
 func parseOp(ctx *deserializationContext, tag byte) (opCode, error) {
 	for _, op := range opCodes {
@@ -201,20 +155,4 @@ func parseOp(ctx *deserializationContext, tag byte) (opCode, error) {
 		}
 	}
 	return nil, fmt.Errorf("could not decode tag %02x", tag)
-}
-
-func parseCryptOp(ctx *deserializationContext) (*cryptOp, error) {
-	tag, err := ctx.readByte()
-	if err != nil {
-		return nil, err
-	}
-	op, err := parseOp(ctx, tag)
-	if err != nil {
-		return nil, err
-	}
-	if cryptOp, ok := op.(*cryptOp); ok {
-		return cryptOp, nil
-	} else {
-		return nil, fmt.Errorf("expected cryptOp, got %#v", op)
-	}
 }

@@ -97,10 +97,7 @@ func (b *BitcoinAttestation) encode(ctx *serializationContext) error {
 
 const hashMerkleRootSize = 32
 
-//
-func (b *BitcoinAttestation) VerifyAgainstBlockHash(
-	digest, blockHash []byte,
-) error {
+func (b *BitcoinAttestation) VerifyAgainstBlockHash(digest, blockHash []byte) error {
 	if len(digest) != hashMerkleRootSize {
 		return fmt.Errorf("invalid digest size %d", len(digest))
 	}

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"strings"
@@ -49,7 +49,7 @@ func checkStatusOK(resp *http.Response) error {
 		return fmt.Errorf("%s (body=nil)", errMsg)
 	}
 	defer resp.Body.Close()
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("%s (bodyErr=%v)", errMsg, err)
 	} else {
@@ -80,8 +80,8 @@ func (c *RemoteCalendar) url(path string) string {
 	return c.baseURL + path
 }
 
-func (c *RemoteCalendar) Submit(digest []byte) (*Timestamp, error) {
-	body := bytes.NewBuffer(digest)
+func (c *RemoteCalendar) Submit(digest [32]byte) (*Timestamp, error) {
+	body := bytes.NewBuffer(digest[:])
 	req, err := http.NewRequest("POST", c.url("digest"), body)
 	if err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func (c *RemoteCalendar) Submit(digest []byte) (*Timestamp, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("expected 200, got %v", resp.Status)
 	}
-	return NewTimestampFromReader(resp.Body, digest)
+	return NewTimestampFromReader(resp.Body, digest[:])
 }
 
 func (c *RemoteCalendar) GetTimestamp(commitment []byte) (*Timestamp, error) {

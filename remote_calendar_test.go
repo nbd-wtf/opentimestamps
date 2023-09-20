@@ -27,9 +27,8 @@ func newTestCalendar(url string) *RemoteCalendar {
 	return cal
 }
 
-func newTestDigest(in string) []byte {
-	hash := sha256.Sum256([]byte(in))
-	return hash[:]
+func newTestDigest(in string) [32]byte {
+	return sha256.Sum256([]byte(in))
 }
 
 func TestRemoteCalendarExample(t *testing.T) {

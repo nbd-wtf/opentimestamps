@@ -114,13 +114,7 @@ func (t *Timestamp) Dump() string {
 	return t.DumpWithConfig(defaultDumpConfig)
 }
 
-func parseTagOrAttestation(
-	ts *Timestamp,
-	ctx *deserializationContext,
-	tag byte,
-	message []byte,
-	limit int,
-) error {
+func parseTagOrAttestation(ts *Timestamp, ctx *deserializationContext, tag byte, message []byte, limit int) error {
 	if tag == 0x00 {
 		a, err := ParseAttestation(ctx)
 		if err != nil {
@@ -147,9 +141,7 @@ func parseTagOrAttestation(
 	return nil
 }
 
-func parse(
-	ts *Timestamp, ctx *deserializationContext, message []byte, limit int,
-) error {
+func parse(ts *Timestamp, ctx *deserializationContext, message []byte, limit int) error {
 	if limit == 0 {
 		return fmt.Errorf("recursion limit")
 	}
@@ -176,9 +168,7 @@ func parse(
 	return parseTagOrAttestation(ts, ctx, tag, message, limit)
 }
 
-func newTimestampFromContext(
-	ctx *deserializationContext, message []byte,
-) (*Timestamp, error) {
+func newTimestampFromContext(ctx *deserializationContext, message []byte) (*Timestamp, error) {
 	recursionLimit := 1000
 	ts := &Timestamp{Message: message}
 	err := parse(ts, ctx, message, recursionLimit)
