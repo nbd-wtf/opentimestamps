@@ -2,8 +2,10 @@ package opentimestamps
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"strings"
 
 	"golang.org/x/exp/slices"
 )
@@ -53,50 +55,77 @@ type Instruction struct {
 }
 
 type Attestation struct {
-	Name               string
 	BitcoinBlockHeight uint64
 	CalendarServerURL  string
 }
 
-func parseCalendarServerResponse(buf Buffer, digest []byte) (Timestamp, error) {
-	ts := Timestamp{
+func (att Attestation) Name() string {
+	if att.BitcoinBlockHeight != 0 {
+		return "bitcoin"
+	} else if att.CalendarServerURL != "" {
+		return "pending"
+	} else {
+		return "unknown/broken"
+	}
+}
+
+func (att Attestation) String() string {
+	if att.BitcoinBlockHeight != 0 {
+		return fmt.Sprintf("bitcoin(%d)", att.BitcoinBlockHeight)
+	} else if att.CalendarServerURL != "" {
+		return fmt.Sprintf("pending(%s)", att.CalendarServerURL)
+	} else {
+		return "unknown/broken"
+	}
+}
+
+func parseCalendarServerResponse(buf Buffer, digest []byte) (*Timestamp, error) {
+	ts := &Timestamp{
 		Digest: digest,
 	}
 
-	err := parseTimestamp(buf, &ts)
+	err := parseTimestamp(buf, ts)
 	if err != nil {
-		return ts, err
+		return nil, err
 	}
 
 	return ts, nil
 }
 
-func parseOTSFile(buf Buffer) (Timestamp, error) {
-	ts := Timestamp{}
-
+func parseOTSFile(buf Buffer) (*Timestamp, error) {
 	// read magic
 	// read version [1 byte]
 	// read crypto operation for file digest [1 byte]
 	// read file digest [32 byte (depends)]
-	if magic, err := buf.readBytes(len(headerMagic)); err != nil || slices.Equal(headerMagic, magic) {
-		return ts, fmt.Errorf("invalid ots file header '%s': %w", magic, err)
+	if magic, err := buf.readBytes(len(headerMagic)); err != nil || !slices.Equal(headerMagic, magic) {
+		return nil, fmt.Errorf("invalid ots file header '%s': %w", magic, err)
 	}
 
-	if version, err := buf.readByte(); err != nil || version != '1' {
-		return ts, fmt.Errorf("invalid ots file version '%v': %w", version, err)
+	if version, err := buf.readVarUint(); err != nil || version != 1 {
+		return nil, fmt.Errorf("invalid ots file version '%v': %w", version, err)
 	}
 
 	tag, err := buf.readByte()
 	if err != nil {
-		return ts, fmt.Errorf("failed to read operation byte: %w", err)
+		return nil, fmt.Errorf("failed to read operation byte: %w", err)
 	}
 
 	if op, err := readInstruction(buf, tag); err != nil || op.Operation.Name != "sha256" {
-		return ts, fmt.Errorf("invalid crypto operation '%v', only sha256 supported: %w", op, err)
+		return nil, fmt.Errorf("invalid crypto operation '%v', only sha256 supported: %w", op, err)
 	}
 
-	if err := parseTimestamp(buf, &ts); err != nil {
-		return ts, err
+	// if we got here assume the digest is sha256
+	digest, err := buf.readBytes(32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read 32-byte digest: %w", err)
+	}
+
+	ts := &Timestamp{
+		Digest: digest,
+	}
+
+	if err := parseTimestamp(buf, ts); err != nil {
+		return nil, err
 	}
 
 	return ts, nil
@@ -150,7 +179,7 @@ func parseTimestamp(buf Buffer, ts *Timestamp) error {
 				}
 				ts.Instructions[currInstructionsBlock] = append(
 					ts.Instructions[currInstructionsBlock],
-					Instruction{Attestation: &Attestation{Name: "pending", CalendarServerURL: string(val)}},
+					Instruction{Attestation: &Attestation{CalendarServerURL: string(val)}},
 				)
 				continue
 			case slices.Equal(magic, bitcoinMagic):
@@ -160,7 +189,7 @@ func parseTimestamp(buf Buffer, ts *Timestamp) error {
 				}
 				ts.Instructions[currInstructionsBlock] = append(
 					ts.Instructions[currInstructionsBlock],
-					Instruction{Attestation: &Attestation{Name: "bitcoin", BitcoinBlockHeight: val}},
+					Instruction{Attestation: &Attestation{BitcoinBlockHeight: val}},
 				)
 				continue
 			default:
@@ -208,4 +237,78 @@ func readInstruction(buf Buffer, tag byte) (*Instruction, error) {
 	}
 
 	return &inst, nil
+}
+
+func (ts Timestamp) String() string {
+	strs := make([]string, 0, 100)
+	strs = append(strs, fmt.Sprintf("file digest: %x", ts.Digest))
+	strs = append(strs, fmt.Sprintf("hashed with: sha256"))
+	strs = append(strs, "sets:")
+	for _, set := range ts.Instructions {
+		strs = append(strs, "~> instruction set")
+		for _, inst := range set {
+			line := "  "
+			if inst.Operation != nil {
+				line += inst.Operation.Name
+				if inst.Operation.Binary {
+					line += " " + hex.EncodeToString(inst.Argument)
+				}
+			} else if inst.Attestation != nil {
+				line += inst.Attestation.String()
+			} else {
+				panic(fmt.Sprintf("invalid instruction timestamp: %v", inst))
+			}
+			strs = append(strs, line)
+		}
+	}
+	return strings.Join(strs, "\n")
+}
+
+func (ts Timestamp) SerializeToFile() []byte {
+	data := make([]byte, 0, 5050)
+	data = append(data, headerMagic...)
+	data = appendVarUint(data, 1)
+	data = append(data, 0x08) // sha256
+	data = append(data, ts.Digest...)
+	data = append(data, ts.Serialize()...)
+	return data
+}
+
+func (ts Timestamp) Serialize() []byte {
+	data := make([]byte, 0, 5000)
+	for i, set := range ts.Instructions {
+		for _, inst := range set {
+			if inst.Operation != nil {
+				// write normal operation
+				data = append(data, inst.Operation.Tag)
+				if inst.Operation.Binary {
+					data = appendVarBytes(data, inst.Argument)
+				}
+			} else if inst.Attestation != nil {
+				// write attestation record
+				data = append(data, 0x00)
+				{
+					// will use a new buffer for the actual attestation data
+					abuf := make([]byte, 0, 100)
+					if inst.BitcoinBlockHeight != 0 {
+						data = append(data, bitcoinMagic...) // this goes in the main data buffer
+						abuf = appendVarUint(abuf, inst.BitcoinBlockHeight)
+					} else if inst.CalendarServerURL != "" {
+						data = append(data, pendingMagic...) // this goes in the main data buffer
+						abuf = appendVarBytes(abuf, []byte(inst.CalendarServerURL))
+					} else {
+						panic(fmt.Sprintf("invalid attestation: %v", inst))
+					}
+					data = appendVarBytes(data, abuf) // we append that data as varbytes
+				}
+			} else {
+				panic(fmt.Sprintf("invalid instruction: %v", inst))
+			}
+		}
+		if i+1 < len(ts.Instructions) {
+			// write separator and start a new set of instructions
+			data = append(data, 0xff)
+		}
+	}
+	return data
 }

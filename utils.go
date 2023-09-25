@@ -88,3 +88,29 @@ func (buf Buffer) readVarBytes() ([]byte, error) {
 	fmt.Println("->", hex.EncodeToString(b))
 	return b, nil
 }
+
+func appendVarUint(buf []byte, value uint64) []byte {
+	if value == 0 {
+		buf = append(buf, 0)
+	} else {
+		for value != 0 {
+			b := byte(value & 0b01111111)
+			if value > 0b01111111 {
+				b |= 0b10000000
+			}
+			buf = append(buf, b)
+			if value <= 0b01111111 {
+				break
+			}
+			value >>= 7
+		}
+	}
+
+	return buf
+}
+
+func appendVarBytes(buf []byte, value []byte) []byte {
+	buf = appendVarUint(buf, uint64(len(value)))
+	buf = append(buf, value...)
+	return buf
+}
