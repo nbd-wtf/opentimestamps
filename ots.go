@@ -140,10 +140,14 @@ func parseTimestamp(buf Buffer, ts *Timestamp) error {
 	//        interpret these depending on the type of attestation
 	//          if bitcoin: readvaruint as the block height
 	//          if pending from calendar: readvarbytes as the utf-8 calendar url
-	//   if 0xff = skip and start reading a new block of instructions?
+	//      end or go back to last continuation byte
+	//   if 0xff = pick up a continuation byte (checkpoint) and add it to stack
 
 	currInstructionsBlock := 0
-	ts.Instructions = make([][]Instruction, 0, 5)
+	ts.Instructions = make([][]Instruction, 0, 10)
+
+	// we will store checkpoints here
+	checkpoints := make([][]Instruction, 0, 4)
 
 	// start first instruction block
 	ts.Instructions = append(ts.Instructions, make([]Instruction, 0, 30))
@@ -181,7 +185,6 @@ func parseTimestamp(buf Buffer, ts *Timestamp) error {
 					ts.Instructions[currInstructionsBlock],
 					Instruction{Attestation: &Attestation{CalendarServerURL: string(val)}},
 				)
-				continue
 			case slices.Equal(magic, bitcoinMagic):
 				val, err := abuf.readVarUint()
 				if err != nil {
@@ -191,30 +194,33 @@ func parseTimestamp(buf Buffer, ts *Timestamp) error {
 					ts.Instructions[currInstructionsBlock],
 					Instruction{Attestation: &Attestation{BitcoinBlockHeight: val}},
 				)
-				continue
 			default:
-				return fmt.Errorf("unsupported attestation type %v", magic)
+				return fmt.Errorf("unsupported attestation type '%x': %x", magic, this)
+			}
+
+			// check if we have checkpoints and, if yes, copy them in a new block of instructions
+			ncheckpoints := len(checkpoints)
+			if ncheckpoints > 0 {
+				// use this checkpoint as the starting point for the next block
+				cp := checkpoints[ncheckpoints-1]
+				checkpoints = checkpoints[0 : ncheckpoints-1] // remove this from the stack
+				ts.Instructions = append(ts.Instructions, cp)
+				currInstructionsBlock++
 			}
 		} else if tag == 0xff {
-			// another block of instructions
-			ts.Instructions = append(ts.Instructions, make([]Instruction, 0, 30))
-			currInstructionsBlock++
-			tag, err = buf.readByte()
+			// pick up a checkpoint to be used later
+			currentBlock := ts.Instructions[currInstructionsBlock]
+			cp := make([]Instruction, len(currentBlock))
+			copy(cp, currentBlock)
+			checkpoints = append(checkpoints, cp)
+		} else {
+			// a new operation in this block
+			inst, err := readInstruction(buf, tag)
 			if err != nil {
-				if err == io.EOF {
-					return nil
-				}
-				return fmt.Errorf("failed to read operation byte when starting a new block of instructions: %w", err)
+				return fmt.Errorf("failed to read instruction: %w", err)
 			}
+			ts.Instructions[currInstructionsBlock] = append(ts.Instructions[currInstructionsBlock], *inst)
 		}
-
-		// a new operation in this block
-		inst, err := readInstruction(buf, tag)
-		if err != nil {
-			return fmt.Errorf("failed to read instruction: %w", err)
-		}
-
-		ts.Instructions[currInstructionsBlock] = append(ts.Instructions[currInstructionsBlock], *inst)
 	}
 }
 
