@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"strings"
 
 	"golang.org/x/exp/slices"
@@ -30,8 +29,18 @@ type Operation struct {
 }
 
 var tags = map[byte]*Operation{
-	0xf0: {"append", 0xf0, true, func(curr []byte, arg []byte) []byte { return append(curr, arg...) }},
-	0xf1: {"prepend", 0xf1, true, func(curr []byte, arg []byte) []byte { return append(arg, curr...) }},
+	0xf0: {"append", 0xf0, true, func(curr []byte, arg []byte) []byte {
+		result := make([]byte, len(curr)+len(arg))
+		copy(result[0:], curr)
+		copy(result[len(curr):], arg)
+		return result
+	}},
+	0xf1: {"prepend", 0xf1, true, func(curr []byte, arg []byte) []byte {
+		result := make([]byte, len(curr)+len(arg))
+		copy(result[0:], arg)
+		copy(result[len(arg):], curr)
+		return result
+	}},
 	0xf2: {"reverse", 0xf2, false, func(curr []byte, arg []byte) []byte { panic("reverse not implemented") }},
 	0xf3: {"hexlify", 0xf3, false, func(curr []byte, arg []byte) []byte { panic("hexlify not implemented") }},
 	0x02: {"sha1", 0x02, false, func(curr []byte, arg []byte) []byte { panic("sha1 not implemented") }},
@@ -43,216 +52,102 @@ var tags = map[byte]*Operation{
 	0x67: {"keccak256", 0x67, false, func(curr []byte, arg []byte) []byte { panic("keccak256 not implemented") }},
 }
 
+// A Timestamp is basically the content of an .ots file: it has an initial digest and
+// a series of sequences of instructions. Each sequence must be evaluated separately, applying the operations
+// on top of each other, starting with the .Digest until they end on an attestation.
 type Timestamp struct {
 	Digest       []byte
-	Instructions [][]Instruction
+	Instructions []Sequence
 }
 
+// a Instruction can be an operation like "append" or "prepend" (this will be the case when .Operation != nil)
+// or an attestation (when .Attestation != nil).
+// It will have a non-nil .Argument whenever the operation requires an argument.
 type Instruction struct {
 	*Operation
 	Argument []byte
 	*Attestation
 }
 
-type Attestation struct {
-	BitcoinBlockHeight uint64
-	CalendarServerURL  string
-}
-
-func (att Attestation) Name() string {
-	if att.BitcoinBlockHeight != 0 {
-		return "bitcoin"
-	} else if att.CalendarServerURL != "" {
-		return "pending"
-	} else {
-		return "unknown/broken"
-	}
-}
-
-func (att Attestation) String() string {
-	if att.BitcoinBlockHeight != 0 {
-		return fmt.Sprintf("bitcoin(%d)", att.BitcoinBlockHeight)
-	} else if att.CalendarServerURL != "" {
-		return fmt.Sprintf("pending(%s)", att.CalendarServerURL)
-	} else {
-		return "unknown/broken"
-	}
-}
-
-func parseCalendarServerResponse(buf Buffer, digest []byte) (*Timestamp, error) {
-	ts := &Timestamp{
-		Digest: digest,
-	}
-
-	err := parseTimestamp(buf, ts)
-	if err != nil {
-		return nil, err
-	}
-
-	return ts, nil
-}
-
-func parseOTSFile(buf Buffer) (*Timestamp, error) {
-	// read magic
-	// read version [1 byte]
-	// read crypto operation for file digest [1 byte]
-	// read file digest [32 byte (depends)]
-	if magic, err := buf.readBytes(len(headerMagic)); err != nil || !slices.Equal(headerMagic, magic) {
-		return nil, fmt.Errorf("invalid ots file header '%s': %w", magic, err)
-	}
-
-	if version, err := buf.readVarUint(); err != nil || version != 1 {
-		return nil, fmt.Errorf("invalid ots file version '%v': %w", version, err)
-	}
-
-	tag, err := buf.readByte()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read operation byte: %w", err)
-	}
-
-	if op, err := readInstruction(buf, tag); err != nil || op.Operation.Name != "sha256" {
-		return nil, fmt.Errorf("invalid crypto operation '%v', only sha256 supported: %w", op, err)
-	}
-
-	// if we got here assume the digest is sha256
-	digest, err := buf.readBytes(32)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read 32-byte digest: %w", err)
-	}
-
-	ts := &Timestamp{
-		Digest: digest,
-	}
-
-	if err := parseTimestamp(buf, ts); err != nil {
-		return nil, err
-	}
-
-	return ts, nil
-}
-
-func parseTimestamp(buf Buffer, ts *Timestamp) error {
-	// read instructions
-	//   if operation = push
-	//   if 0x00 = attestation
-	//      read tag [8 bytes]
-	//      readvarbytes
-	//        interpret these depending on the type of attestation
-	//          if bitcoin: readvaruint as the block height
-	//          if pending from calendar: readvarbytes as the utf-8 calendar url
-	//      end or go back to last continuation byte
-	//   if 0xff = pick up a continuation byte (checkpoint) and add it to stack
-
-	currInstructionsBlock := 0
-	ts.Instructions = make([][]Instruction, 0, 10)
-
-	// we will store checkpoints here
-	checkpoints := make([][]Instruction, 0, 4)
-
-	// start first instruction block
-	ts.Instructions = append(ts.Instructions, make([]Instruction, 0, 30))
-
-	// go read these tags
-	for {
-		tag, err := buf.readByte()
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return fmt.Errorf("failed to read operation byte: %w", err)
-		}
-
-		if tag == 0x00 {
-			// enter an attestation context
-			magic, err := buf.readBytes(8)
-			if err != nil {
-				return fmt.Errorf("failed to read attestion magic bytes: %w", err)
-			}
-
-			this, err := buf.readVarBytes()
-			if err != nil {
-				return fmt.Errorf("failed to read attestation bytes: %w", err)
-			}
-			abuf := NewBuffer(this)
-
-			switch {
-			case slices.Equal(magic, pendingMagic):
-				val, err := abuf.readVarBytes()
-				if err != nil {
-					return fmt.Errorf("failed reading calendar server url: %w", err)
-				}
-				ts.Instructions[currInstructionsBlock] = append(
-					ts.Instructions[currInstructionsBlock],
-					Instruction{Attestation: &Attestation{CalendarServerURL: string(val)}},
-				)
-			case slices.Equal(magic, bitcoinMagic):
-				val, err := abuf.readVarUint()
-				if err != nil {
-					return fmt.Errorf("failed reading bitcoin block number: %w", err)
-				}
-				ts.Instructions[currInstructionsBlock] = append(
-					ts.Instructions[currInstructionsBlock],
-					Instruction{Attestation: &Attestation{BitcoinBlockHeight: val}},
-				)
-			default:
-				return fmt.Errorf("unsupported attestation type '%x': %x", magic, this)
-			}
-
-			// check if we have checkpoints and, if yes, copy them in a new block of instructions
-			ncheckpoints := len(checkpoints)
-			if ncheckpoints > 0 {
-				// use this checkpoint as the starting point for the next block
-				cp := checkpoints[ncheckpoints-1]
-				checkpoints = checkpoints[0 : ncheckpoints-1] // remove this from the stack
-				ts.Instructions = append(ts.Instructions, cp)
-				currInstructionsBlock++
-			}
-		} else if tag == 0xff {
-			// pick up a checkpoint to be used later
-			currentBlock := ts.Instructions[currInstructionsBlock]
-			cp := make([]Instruction, len(currentBlock))
-			copy(cp, currentBlock)
-			checkpoints = append(checkpoints, cp)
+func (a Instruction) Equal(b Instruction) bool {
+	if a.Operation != nil {
+		if a.Operation == b.Operation && slices.Equal(a.Argument, b.Argument) {
+			return true
 		} else {
-			// a new operation in this block
-			inst, err := readInstruction(buf, tag)
-			if err != nil {
-				return fmt.Errorf("failed to read instruction: %w", err)
+			return false
+		}
+	} else if a.Attestation != nil {
+		if b.Attestation == nil {
+			return false
+		}
+		if a.Attestation.BitcoinBlockHeight != 0 &&
+			a.Attestation.BitcoinBlockHeight == b.Attestation.BitcoinBlockHeight {
+			return true
+		}
+		if a.Attestation.CalendarServerURL != "" &&
+			a.Attestation.CalendarServerURL == b.Attestation.CalendarServerURL {
+			return true
+		}
+		return false
+	} else {
+		// a is nil -- this is already broken but whatever
+		if b.Attestation == nil && b.Operation == nil {
+			return true
+		}
+		return false
+	}
+}
+
+type Sequence []Instruction
+
+func (ts Timestamp) GetPendingSequences() []Sequence {
+	bitcoin := ts.GetBitcoinAttestedSequences()
+
+	results := make([]Sequence, 0, len(ts.Instructions))
+	for _, seq := range ts.Instructions {
+		if len(seq) > 0 && seq[len(seq)-1].Attestation != nil && seq[len(seq)-1].Attestation.CalendarServerURL != "" {
+			// this is a calendar sequence, fine
+			// now we check if this same sequence isn't contained in a bigger one that contains a bitcoin attestation
+			cseq := seq
+			for _, bseq := range bitcoin {
+				if len(bseq) < len(cseq) {
+					continue
+				}
+
+				if slices.EqualFunc(bseq[0:len(cseq)], cseq, func(a, b Instruction) bool { return a.Equal(b) }) {
+					goto thisSequenceIsAlreadyConfirmed
+				}
 			}
-			ts.Instructions[currInstructionsBlock] = append(ts.Instructions[currInstructionsBlock], *inst)
+
+			// sequence not confirmed, so add it to pending result
+			results = append(results, seq)
+
+		thisSequenceIsAlreadyConfirmed:
+			// skip this
+			continue
 		}
 	}
+	return results
 }
 
-func readInstruction(buf Buffer, tag byte) (*Instruction, error) {
-	op, ok := tags[tag]
-	if !ok {
-		return nil, fmt.Errorf("unknown tag %v", tag)
-	}
-
-	inst := Instruction{
-		Operation: op,
-	}
-
-	if op.Binary {
-		val, err := buf.readVarBytes()
-		if err != nil {
-			return nil, fmt.Errorf("error reading argument: %w", err)
+func (ts Timestamp) GetBitcoinAttestedSequences() []Sequence {
+	results := make([]Sequence, 0, len(ts.Instructions))
+	for _, seq := range ts.Instructions {
+		if len(seq) > 0 && seq[len(seq)-1].Attestation != nil && seq[len(seq)-1].Attestation.BitcoinBlockHeight > 0 {
+			results = append(results, seq)
 		}
-		inst.Argument = val
 	}
-
-	return &inst, nil
+	return results
 }
 
-func (ts Timestamp) String() string {
+func (ts Timestamp) Human() string {
 	strs := make([]string, 0, 100)
 	strs = append(strs, fmt.Sprintf("file digest: %x", ts.Digest))
 	strs = append(strs, fmt.Sprintf("hashed with: sha256"))
-	strs = append(strs, "sets:")
-	for _, set := range ts.Instructions {
-		strs = append(strs, "~> instruction set")
-		for _, inst := range set {
+	strs = append(strs, "instruction sequences:")
+	for _, seq := range ts.Instructions {
+		strs = append(strs, "~>")
+		for _, inst := range seq {
 			line := "  "
 			if inst.Operation != nil {
 				line += inst.Operation.Name
@@ -260,7 +155,7 @@ func (ts Timestamp) String() string {
 					line += " " + hex.EncodeToString(inst.Argument)
 				}
 			} else if inst.Attestation != nil {
-				line += inst.Attestation.String()
+				line += inst.Attestation.Human()
 			} else {
 				panic(fmt.Sprintf("invalid instruction timestamp: %v", inst))
 			}
@@ -276,14 +171,14 @@ func (ts Timestamp) SerializeToFile() []byte {
 	data = appendVarUint(data, 1)
 	data = append(data, 0x08) // sha256
 	data = append(data, ts.Digest...)
-	data = append(data, ts.Serialize()...)
+	data = append(data, ts.SerializeInstructionSequences()...)
 	return data
 }
 
-func (ts Timestamp) Serialize() []byte {
+func (ts Timestamp) SerializeInstructionSequences() []byte {
 	data := make([]byte, 0, 5000)
-	for i, set := range ts.Instructions {
-		for _, inst := range set {
+	for i, seq := range ts.Instructions {
+		for _, inst := range seq {
 			if inst.Operation != nil {
 				// write normal operation
 				data = append(data, inst.Operation.Tag)
@@ -312,9 +207,45 @@ func (ts Timestamp) Serialize() []byte {
 			}
 		}
 		if i+1 < len(ts.Instructions) {
-			// write separator and start a new set of instructions
+			// write separator and start a new sequence of instructions
 			data = append(data, 0xff)
 		}
 	}
 	return data
+}
+
+type Attestation struct {
+	BitcoinBlockHeight uint64
+	CalendarServerURL  string
+}
+
+func (att Attestation) Name() string {
+	if att.BitcoinBlockHeight != 0 {
+		return "bitcoin"
+	} else if att.CalendarServerURL != "" {
+		return "pending"
+	} else {
+		return "unknown/broken"
+	}
+}
+
+func (att Attestation) Human() string {
+	if att.BitcoinBlockHeight != 0 {
+		return fmt.Sprintf("bitcoin(%d)", att.BitcoinBlockHeight)
+	} else if att.CalendarServerURL != "" {
+		return fmt.Sprintf("pending(%s)", att.CalendarServerURL)
+	} else {
+		return "unknown/broken"
+	}
+}
+
+func ComputeSequence(initial []byte, seq []Instruction) []byte {
+	current := initial
+	for _, inst := range seq {
+		if inst.Operation == nil {
+			break
+		}
+		current = inst.Operation.Apply(current, inst.Argument)
+	}
+	return current
 }
