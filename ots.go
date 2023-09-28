@@ -100,6 +100,17 @@ func (a Instruction) Equal(b Instruction) bool {
 
 type Sequence []Instruction
 
+func (seq Sequence) Compute(initial []byte) []byte {
+	current := initial
+	for _, inst := range seq {
+		if inst.Operation == nil {
+			break
+		}
+		current = inst.Operation.Apply(current, inst.Argument)
+	}
+	return current
+}
+
 func (ts Timestamp) GetPendingSequences() []Sequence {
 	bitcoin := ts.GetBitcoinAttestedSequences()
 
@@ -237,15 +248,4 @@ func (att Attestation) Human() string {
 	} else {
 		return "unknown/broken"
 	}
-}
-
-func ComputeSequence(initial []byte, seq []Instruction) []byte {
-	current := initial
-	for _, inst := range seq {
-		if inst.Operation == nil {
-			break
-		}
-		current = inst.Operation.Apply(current, inst.Argument)
-	}
-	return current
 }

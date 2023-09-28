@@ -11,6 +11,7 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"golang.org/x/exp/slices"
 )
 
 func NewEsploraClient(url string) Bitcoin {
@@ -32,16 +33,23 @@ func (e esplora) GetBlockHash(height int64) (*chainhash.Hash, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := hex.Decode(hexb, hexb); err != nil || len(hexb) != chainhash.HashSize {
+
+	hash, err := hex.DecodeString(string(hexb))
+	if err != nil {
 		return nil, err
 	}
+	if len(hash) != chainhash.HashSize {
+		return nil, fmt.Errorf("got block hash (%x) of invalid size (expected %d)", hash, chainhash.HashSize)
+	}
+
+	slices.Reverse(hash)
 	var chash chainhash.Hash
-	copy(chash[:], hexb)
+	copy(chash[:], hash)
 	return &chash, nil
 }
 
 func (e esplora) GetBlockHeader(hash *chainhash.Hash) (*wire.BlockHeader, error) {
-	resp, err := http.Get(fmt.Sprintf("%s/block/%x/header", e.baseurl, hash))
+	resp, err := http.Get(fmt.Sprintf("%s/block/%s/header", e.baseurl, hash.String()))
 	if err != nil {
 		return nil, err
 	}
@@ -50,12 +58,14 @@ func (e esplora) GetBlockHeader(hash *chainhash.Hash) (*wire.BlockHeader, error)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := hex.Decode(hexb, hexb); err != nil {
+
+	headerHash, err := hex.DecodeString(string(hexb))
+	if err != nil {
 		return nil, err
 	}
 
 	header := &wire.BlockHeader{}
-	if err := header.BtcDecode(bytes.NewBuffer(hexb), 0, 0); err != nil {
+	if err := header.BtcDecode(bytes.NewBuffer(headerHash), 0, 0); err != nil {
 		return nil, err
 	}
 
