@@ -44,7 +44,7 @@ var tags = map[byte]*Operation{
 	0xf2: {"reverse", 0xf2, false, func(curr []byte, arg []byte) []byte { panic("reverse not implemented") }},
 	0xf3: {"hexlify", 0xf3, false, func(curr []byte, arg []byte) []byte { panic("hexlify not implemented") }},
 	0x02: {"sha1", 0x02, false, func(curr []byte, arg []byte) []byte { panic("sha1 not implemented") }},
-	0x03: {"ripemd160", 0x03, false, func(curr []byte, arg []byte) []byte { panic("ripemd160 not implemented") }},
+	0x03: {"ripemd160", 0x03, false, ripemd160},
 	0x08: {"sha256", 0x08, false, func(curr []byte, arg []byte) []byte {
 		v := sha256.Sum256(curr)
 		return v[:]
