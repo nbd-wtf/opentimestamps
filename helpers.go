@@ -12,8 +12,8 @@ import (
 func CompareInstructions(a, b Instruction) int {
 	if a.Operation != nil {
 		if b.Attestation != nil {
-			// a is an operation but b is an attestation, b is bigger
-			return -1
+			// a is an operation but b is an attestation, a is bigger
+			return +1
 		}
 		if a.Operation == b.Operation {
 			// if both are the same operation sort by the argument
@@ -29,8 +29,8 @@ func CompareInstructions(a, b Instruction) int {
 			return 0
 		}
 	} else if a.Attestation != nil && b.Attestation == nil {
-		// a is an attestation but b is not, a is bigger
-		return 1
+		// a is an attestation but b is not, b is bigger
+		return -1
 	} else if a.Attestation != nil && b.Attestation != nil {
 		// both are attestations
 		if a.Attestation.BitcoinBlockHeight == 0 && b.Attestation.BitcoinBlockHeight == 0 {
