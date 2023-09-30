@@ -36,7 +36,7 @@ func (seq Sequence) Verify(bitcoin Bitcoin, initial []byte) error {
 	merkleRoot := blockHeader.MerkleRoot[:]
 
 	result := seq.Compute(initial)
-	if slices.Equal(result, merkleRoot) {
+	if !slices.Equal(result, merkleRoot) {
 		return fmt.Errorf("sequence result '%x' doesn't match the bitcoin merkle root for block %d: %x",
 			result, att.BitcoinBlockHeight, merkleRoot)
 	}
