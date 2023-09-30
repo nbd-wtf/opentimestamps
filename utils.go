@@ -20,7 +20,7 @@ type Buffer struct {
 	buf []byte
 }
 
-func NewBuffer(buf []byte) Buffer {
+func newBuffer(buf []byte) Buffer {
 	zero := 0
 	return Buffer{&zero, buf}
 }
@@ -98,4 +98,14 @@ func appendVarBytes(buf []byte, value []byte) []byte {
 	buf = appendVarUint(buf, uint64(len(value)))
 	buf = append(buf, value...)
 	return buf
+}
+
+func getCommonPrefixIndex(s1 []Instruction, s2 []Instruction) int {
+	n := min(len(s1), len(s2))
+	for i := 0; i < n; i++ {
+		if CompareInstructions(s1[i], s2[i]) != 0 {
+			return i
+		}
+	}
+	return n
 }

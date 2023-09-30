@@ -52,10 +52,10 @@ var tags = map[byte]*Operation{
 	0x67: {"keccak256", 0x67, false, func(curr []byte, arg []byte) []byte { panic("keccak256 not implemented") }},
 }
 
-// A Timestamp is basically the content of an .ots file: it has an initial digest and
+// A File represents the parsed content of an .ots file: it has an initial digest and
 // a series of sequences of instructions. Each sequence must be evaluated separately, applying the operations
 // on top of each other, starting with the .Digest until they end on an attestation.
-type Timestamp struct {
+type File struct {
 	Digest       []byte
 	Instructions []Sequence
 }
@@ -67,35 +67,6 @@ type Instruction struct {
 	*Operation
 	Argument []byte
 	*Attestation
-}
-
-func (a Instruction) Equal(b Instruction) bool {
-	if a.Operation != nil {
-		if a.Operation == b.Operation && slices.Equal(a.Argument, b.Argument) {
-			return true
-		} else {
-			return false
-		}
-	} else if a.Attestation != nil {
-		if b.Attestation == nil {
-			return false
-		}
-		if a.Attestation.BitcoinBlockHeight != 0 &&
-			a.Attestation.BitcoinBlockHeight == b.Attestation.BitcoinBlockHeight {
-			return true
-		}
-		if a.Attestation.CalendarServerURL != "" &&
-			a.Attestation.CalendarServerURL == b.Attestation.CalendarServerURL {
-			return true
-		}
-		return false
-	} else {
-		// a is nil -- this is already broken but whatever
-		if b.Attestation == nil && b.Operation == nil {
-			return true
-		}
-		return false
-	}
 }
 
 type Sequence []Instruction
@@ -111,7 +82,7 @@ func (seq Sequence) Compute(initial []byte) []byte {
 	return current
 }
 
-func (ts Timestamp) GetPendingSequences() []Sequence {
+func (ts File) GetPendingSequences() []Sequence {
 	bitcoin := ts.GetBitcoinAttestedSequences()
 
 	results := make([]Sequence, 0, len(ts.Instructions))
@@ -125,7 +96,7 @@ func (ts Timestamp) GetPendingSequences() []Sequence {
 					continue
 				}
 
-				if slices.EqualFunc(bseq[0:len(cseq)], cseq, func(a, b Instruction) bool { return a.Equal(b) }) {
+				if slices.EqualFunc(bseq[0:len(cseq)], cseq, func(a, b Instruction) bool { return CompareInstructions(a, b) == 0 }) {
 					goto thisSequenceIsAlreadyConfirmed
 				}
 			}
@@ -141,7 +112,7 @@ func (ts Timestamp) GetPendingSequences() []Sequence {
 	return results
 }
 
-func (ts Timestamp) GetBitcoinAttestedSequences() []Sequence {
+func (ts File) GetBitcoinAttestedSequences() []Sequence {
 	results := make([]Sequence, 0, len(ts.Instructions))
 	for _, seq := range ts.Instructions {
 		if len(seq) > 0 && seq[len(seq)-1].Attestation != nil && seq[len(seq)-1].Attestation.BitcoinBlockHeight > 0 {
@@ -151,7 +122,7 @@ func (ts Timestamp) GetBitcoinAttestedSequences() []Sequence {
 	return results
 }
 
-func (ts Timestamp) Human() string {
+func (ts File) Human() string {
 	strs := make([]string, 0, 100)
 	strs = append(strs, fmt.Sprintf("file digest: %x", ts.Digest))
 	strs = append(strs, fmt.Sprintf("hashed with: sha256"))
@@ -176,7 +147,7 @@ func (ts Timestamp) Human() string {
 	return strings.Join(strs, "\n")
 }
 
-func (ts Timestamp) SerializeToFile() []byte {
+func (ts File) SerializeToFile() []byte {
 	data := make([]byte, 0, 5050)
 	data = append(data, headerMagic...)
 	data = appendVarUint(data, 1)
@@ -186,43 +157,77 @@ func (ts Timestamp) SerializeToFile() []byte {
 	return data
 }
 
-func (ts Timestamp) SerializeInstructionSequences() []byte {
-	data := make([]byte, 0, 5000)
-	for i, seq := range ts.Instructions {
-		for _, inst := range seq {
+func (ts File) SerializeInstructionSequences() []byte {
+	sequences := make([]Sequence, len(ts.Instructions))
+	copy(sequences, ts.Instructions)
+
+	// first we sort everything so the checkpoint stuff makes sense
+	slices.SortFunc(sequences, func(a, b Sequence) int { return slices.CompareFunc(a, b, CompareInstructions) })
+
+	// checkpoints we may leave to the next people
+	sequenceCheckpoints := make([][]int, len(sequences))
+	for s1 := range sequences {
+		// keep an ordered slice of all the checkpoints we will potentially leave during our write journey for this sequence
+		checkpoints := make([]int, 0, len(sequences[s1]))
+		for s2 := s1 + 1; s2 < len(sequences); s2++ {
+			chp := getCommonPrefixIndex(sequences[s1], sequences[s2])
+			if pos, found := slices.BinarySearch(checkpoints, chp); !found {
+				checkpoints = append(checkpoints, -1)        // make room
+				copy(checkpoints[pos+1:], checkpoints[pos:]) // move elements to the right
+				checkpoints[pos] = chp                       // insert this
+			}
+		}
+		sequenceCheckpoints[s1] = checkpoints
+	}
+
+	// now actually go through the sequences writing them
+	result := make([]byte, 0, 500)
+	for s, seq := range sequences {
+		startingAt := 0
+		if s > 0 {
+			// we will always start at the last checkpoint left by the previous sequence
+			startingAt = sequenceCheckpoints[s-1][len(sequenceCheckpoints[s-1])-1]
+		}
+
+		for i := startingAt; i < len(seq); i++ {
+			// before writing anything, decide if we wanna leave a checkpoint here
+			for _, chk := range sequenceCheckpoints[s] {
+				if chk == i {
+					// leave a checkpoint
+					result = append(result, 0xff)
+				}
+			}
+
+			inst := seq[i]
 			if inst.Operation != nil {
 				// write normal operation
-				data = append(data, inst.Operation.Tag)
+				result = append(result, inst.Operation.Tag)
 				if inst.Operation.Binary {
-					data = appendVarBytes(data, inst.Argument)
+					result = appendVarBytes(result, inst.Argument)
 				}
 			} else if inst.Attestation != nil {
 				// write attestation record
-				data = append(data, 0x00)
+				result = append(result, 0x00)
 				{
-					// will use a new buffer for the actual attestation data
+					// will use a new buffer for the actual attestation result
 					abuf := make([]byte, 0, 100)
 					if inst.BitcoinBlockHeight != 0 {
-						data = append(data, bitcoinMagic...) // this goes in the main data buffer
+						result = append(result, bitcoinMagic...) // this goes in the main result buffer
 						abuf = appendVarUint(abuf, inst.BitcoinBlockHeight)
 					} else if inst.CalendarServerURL != "" {
-						data = append(data, pendingMagic...) // this goes in the main data buffer
+						result = append(result, pendingMagic...) // this goes in the main result buffer
 						abuf = appendVarBytes(abuf, []byte(inst.CalendarServerURL))
 					} else {
 						panic(fmt.Sprintf("invalid attestation: %v", inst))
 					}
-					data = appendVarBytes(data, abuf) // we append that data as varbytes
+					result = appendVarBytes(result, abuf) // we append that result as varbytes
 				}
 			} else {
 				panic(fmt.Sprintf("invalid instruction: %v", inst))
 			}
 		}
-		if i+1 < len(ts.Instructions) {
-			// write separator and start a new sequence of instructions
-			data = append(data, 0xff)
-		}
 	}
-	return data
+	return result
 }
 
 type Attestation struct {

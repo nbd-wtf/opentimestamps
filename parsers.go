@@ -19,7 +19,7 @@ func parseCalendarServerResponse(buf Buffer) (Sequence, error) {
 	return seqs[0], nil
 }
 
-func parseOTSFile(buf Buffer) (*Timestamp, error) {
+func parseOTSFile(buf Buffer) (*File, error) {
 	// read magic
 	// read version [1 byte]
 	// read crypto operation for file digest [1 byte]
@@ -47,7 +47,7 @@ func parseOTSFile(buf Buffer) (*Timestamp, error) {
 		return nil, fmt.Errorf("failed to read 32-byte digest: %w", err)
 	}
 
-	ts := &Timestamp{
+	ts := &File{
 		Digest: digest,
 	}
 
@@ -102,7 +102,7 @@ func parseTimestamp(buf Buffer) ([]Sequence, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to read attestation bytes: %w", err)
 			}
-			abuf := NewBuffer(this)
+			abuf := newBuffer(this)
 
 			switch {
 			case slices.Equal(magic, pendingMagic):
@@ -131,17 +131,17 @@ func parseTimestamp(buf Buffer) ([]Sequence, error) {
 			ncheckpoints := len(checkpoints)
 			if ncheckpoints > 0 {
 				// use this checkpoint as the starting point for the next block
-				cp := checkpoints[ncheckpoints-1]
+				chp := checkpoints[ncheckpoints-1]
 				checkpoints = checkpoints[0 : ncheckpoints-1] // remove this from the stack
-				seqs = append(seqs, cp)
+				seqs = append(seqs, chp)
 				currInstructionsBlock++
 			}
 		} else if tag == 0xff {
 			// pick up a checkpoint to be used later
 			currentBlock := seqs[currInstructionsBlock]
-			cp := make([]Instruction, len(currentBlock))
-			copy(cp, currentBlock)
-			checkpoints = append(checkpoints, cp)
+			chp := make([]Instruction, len(currentBlock))
+			copy(chp, currentBlock)
+			checkpoints = append(checkpoints, chp)
 		} else {
 			// a new operation in this block
 			inst, err := readInstruction(buf, tag)

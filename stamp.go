@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-func Stamp(ctx context.Context, calendarUrl string, digest [32]byte) (*Timestamp, error) {
+func Stamp(ctx context.Context, calendarUrl string, digest [32]byte) (Sequence, error) {
 	body := bytes.NewBuffer(digest[:])
 	req, err := http.NewRequestWithContext(ctx, "POST", normalizeUrl(calendarUrl)+"/digest", body)
 	if err != nil {
@@ -29,19 +29,16 @@ func Stamp(ctx context.Context, calendarUrl string, digest [32]byte) (*Timestamp
 	}
 	resp.Body.Close()
 
-	seq, err := parseCalendarServerResponse(NewBuffer(full))
+	seq, err := parseCalendarServerResponse(newBuffer(full))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse response from '%s': %w", calendarUrl, err)
 	}
 
-	return &Timestamp{
-		Digest:       digest[:],
-		Instructions: []Sequence{seq},
-	}, nil
+	return seq, nil
 }
 
-func ReadFromFile(data []byte) (*Timestamp, error) {
-	return parseOTSFile(NewBuffer(data))
+func ReadFromFile(data []byte) (*File, error) {
+	return parseOTSFile(newBuffer(data))
 }
 
 func (seq Sequence) Upgrade(ctx context.Context, initial []byte) (Sequence, error) {
@@ -72,7 +69,7 @@ func (seq Sequence) Upgrade(ctx context.Context, initial []byte) (Sequence, erro
 	}
 	resp.Body.Close()
 
-	newSeq, err := parseCalendarServerResponse(NewBuffer(body))
+	newSeq, err := parseCalendarServerResponse(newBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse response from '%s': %w", attestation.CalendarServerURL, err)
 	}
