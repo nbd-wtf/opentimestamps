@@ -56,8 +56,8 @@ var tags = map[byte]*Operation{
 // a series of sequences of instructions. Each sequence must be evaluated separately, applying the operations
 // on top of each other, starting with the .Digest until they end on an attestation.
 type File struct {
-	Digest       []byte
-	Instructions []Sequence
+	Digest    []byte
+	Sequences []Sequence
 }
 
 // a Instruction can be an operation like "append" or "prepend" (this will be the case when .Operation != nil)
@@ -85,8 +85,8 @@ func (seq Sequence) Compute(initial []byte) []byte {
 func (ts File) GetPendingSequences() []Sequence {
 	bitcoin := ts.GetBitcoinAttestedSequences()
 
-	results := make([]Sequence, 0, len(ts.Instructions))
-	for _, seq := range ts.Instructions {
+	results := make([]Sequence, 0, len(ts.Sequences))
+	for _, seq := range ts.Sequences {
 		if len(seq) > 0 && seq[len(seq)-1].Attestation != nil && seq[len(seq)-1].Attestation.CalendarServerURL != "" {
 			// this is a calendar sequence, fine
 			// now we check if this same sequence isn't contained in a bigger one that contains a bitcoin attestation
@@ -113,8 +113,8 @@ func (ts File) GetPendingSequences() []Sequence {
 }
 
 func (ts File) GetBitcoinAttestedSequences() []Sequence {
-	results := make([]Sequence, 0, len(ts.Instructions))
-	for _, seq := range ts.Instructions {
+	results := make([]Sequence, 0, len(ts.Sequences))
+	for _, seq := range ts.Sequences {
 		if len(seq) > 0 && seq[len(seq)-1].Attestation != nil && seq[len(seq)-1].Attestation.BitcoinBlockHeight > 0 {
 			results = append(results, seq)
 		}
@@ -127,7 +127,7 @@ func (ts File) Human() string {
 	strs = append(strs, fmt.Sprintf("file digest: %x", ts.Digest))
 	strs = append(strs, fmt.Sprintf("hashed with: sha256"))
 	strs = append(strs, "instruction sequences:")
-	for _, seq := range ts.Instructions {
+	for _, seq := range ts.Sequences {
 		strs = append(strs, "~>")
 		for _, inst := range seq {
 			line := "  "
@@ -158,8 +158,8 @@ func (ts File) SerializeToFile() []byte {
 }
 
 func (ts File) SerializeInstructionSequences() []byte {
-	sequences := make([]Sequence, len(ts.Instructions))
-	copy(sequences, ts.Instructions)
+	sequences := make([]Sequence, len(ts.Sequences))
+	copy(sequences, ts.Sequences)
 
 	// first we sort everything so the checkpoint stuff makes sense
 	slices.SortFunc(sequences, func(a, b Sequence) int { return slices.CompareFunc(a, b, CompareInstructions) })

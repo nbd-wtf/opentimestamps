@@ -54,7 +54,7 @@ func parseOTSFile(buf Buffer) (*File, error) {
 	if seqs, err := parseTimestamp(buf); err != nil {
 		return nil, err
 	} else {
-		ts.Instructions = seqs
+		ts.Sequences = seqs
 	}
 
 	return ts, nil
