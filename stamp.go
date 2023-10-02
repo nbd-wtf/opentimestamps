@@ -41,9 +41,9 @@ func ReadFromFile(data []byte) (*File, error) {
 	return parseOTSFile(newBuffer(data))
 }
 
-func (seq Sequence) Upgrade(ctx context.Context, initial []byte) (Sequence, error) {
+func UpgradeSequence(ctx context.Context, seq Sequence, initial []byte) (Sequence, error) {
 	result := seq.Compute(initial)
-	attestation := seq[len(seq)-1]
+	attestation := seq.GetAttestation()
 
 	url := fmt.Sprintf("%s/timestamp/%x", normalizeUrl(attestation.CalendarServerURL), result)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -69,10 +69,14 @@ func (seq Sequence) Upgrade(ctx context.Context, initial []byte) (Sequence, erro
 	}
 	resp.Body.Close()
 
-	newSeq, err := parseCalendarServerResponse(newBuffer(body))
+	tail, err := parseCalendarServerResponse(newBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse response from '%s': %w", attestation.CalendarServerURL, err)
 	}
+
+	newSeq := make(Sequence, len(seq)+len(tail)-1)
+	copy(newSeq, seq[0:len(seq)-1])
+	copy(newSeq[len(seq)-1:], tail)
 
 	return newSeq, nil
 }

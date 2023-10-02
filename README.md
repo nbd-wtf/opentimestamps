@@ -16,8 +16,8 @@ func main () {
     hash := sha256.Sum256([]byte{1,2,3,4,5,6})
     seq, _ := opentimestamps.Stamp(context.Background(), "https://alice.btc.calendar.opentimestamps.org/", hash)
 
-    // you can just call .Upgrade() to get the upgraded sequence (or an error if not yet available)
-    upgradedSeq, err := seq.Upgrade(context.Background(), hash[:])
+    // you can just call UpgradeSequence() to get the upgraded sequence (or an error if not yet available)
+    upgradedSeq, err := opentimestamps.UpgradeSequence(context.Background(), seq, hash[:])
     if err != nil {
         fmt.Println("wait more")
     }
@@ -43,7 +43,7 @@ func main () {
     fmt.Println(hex.EncodeToString(seq[2].Argument)) // "c40fe258f9b828a0b5a7"
 
     // all these instructions can be executed in order, starting from the initial hash
-    result := seq.Compute(hash) // this is the value we send to the calendar server in order to get the upgraded sequence on .Upgrade()
+    result := seq.Compute(hash) // this is the value we send to the calendar server in order to get the upgraded sequence
     finalResult := upgradedSeq.Compute(hash) // this should be the merkle root of a bitcoin block if this sequence is upgraded
 
     // each sequence always ends in an "attestation"
