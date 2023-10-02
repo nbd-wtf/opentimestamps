@@ -71,6 +71,17 @@ type Instruction struct {
 
 type Sequence []Instruction
 
+func (seq Sequence) GetAttestation() Attestation {
+	if len(seq) == 0 {
+		return Attestation{}
+	}
+	att := seq[len(seq)-1]
+	if att.Attestation == nil {
+		return Attestation{}
+	}
+	return *att.Attestation
+}
+
 func (seq Sequence) Compute(initial []byte) []byte {
 	current := initial
 	for _, inst := range seq {
