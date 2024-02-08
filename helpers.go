@@ -3,7 +3,7 @@ package opentimestamps
 import (
 	"strings"
 
-	"golang.org/x/exp/slices"
+	"slices"
 )
 
 // CompareInstructions returns negative if a<b, 0 if a=b and positive if a>b.

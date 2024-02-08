@@ -9,9 +9,10 @@ import (
 	"strconv"
 	"strings"
 
+	"slices"
+
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"golang.org/x/exp/slices"
 )
 
 func NewEsploraClient(url string) Bitcoin {

@@ -3,9 +3,10 @@ package opentimestamps
 import (
 	"fmt"
 
+	"slices"
+
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"golang.org/x/exp/slices"
 )
 
 type Bitcoin interface {

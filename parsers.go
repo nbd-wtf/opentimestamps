@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"golang.org/x/exp/slices"
+	"slices"
 )
 
 func parseCalendarServerResponse(buf Buffer) (Sequence, error) {
