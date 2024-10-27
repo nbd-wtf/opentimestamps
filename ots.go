@@ -149,19 +149,25 @@ func (ts File) GetBitcoinAttestedSequences() []Sequence {
 	return results
 }
 
-func (ts File) Human() string {
+func (ts File) Human(withPartials bool) string {
 	strs := make([]string, 0, 100)
 	strs = append(strs, fmt.Sprintf("file digest: %x", ts.Digest))
 	strs = append(strs, fmt.Sprintf("hashed with: sha256"))
 	strs = append(strs, "instruction sequences:")
 	for _, seq := range ts.Sequences {
+		curr := ts.Digest
 		strs = append(strs, "~>")
+		strs = append(strs, "  start "+hex.EncodeToString(curr))
 		for _, inst := range seq {
 			line := "  "
 			if inst.Operation != nil {
 				line += inst.Operation.Name
+				curr = inst.Operation.Apply(curr, inst.Argument)
 				if inst.Operation.Binary {
 					line += " " + hex.EncodeToString(inst.Argument)
+				}
+				if withPartials {
+					line += " = " + hex.EncodeToString(curr)
 				}
 			} else if inst.Attestation != nil {
 				line += inst.Attestation.Human()
