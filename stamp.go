@@ -42,7 +42,7 @@ func ReadFromFile(data []byte) (*File, error) {
 }
 
 func UpgradeSequence(ctx context.Context, seq Sequence, initial []byte) (Sequence, error) {
-	result := seq.Compute(initial)
+	result, _ := seq.Compute(initial)
 	attestation := seq.GetAttestation()
 
 	url := fmt.Sprintf("%s/timestamp/%x", normalizeUrl(attestation.CalendarServerURL), result)

@@ -1,12 +1,14 @@
 package opentimestamps
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
 
-	"slices"
+	"github.com/btcsuite/btcd/wire"
 )
 
 /*
@@ -82,15 +84,29 @@ func (seq Sequence) GetAttestation() Attestation {
 	return *att.Attestation
 }
 
-func (seq Sequence) Compute(initial []byte) []byte {
+// Compute runs a sequence of operations on top of an initial digest and returns the result, which is often a
+// Bitcoin block merkle root. It also tries to identify the point in the sequence in which an actual Bitcoin
+// transaction is formed and parse that.
+func (seq Sequence) Compute(initial []byte) (merkleRoot []byte, bitcoinTx *wire.MsgTx) {
 	current := initial
-	for _, inst := range seq {
+	for i, inst := range seq {
 		if inst.Operation == nil {
 			break
 		}
+
+		// the first time we do a double-sha256 that is likely a bitcoin transaction
+		if bitcoinTx == nil &&
+			inst.Operation.Name == "sha256" &&
+			len(seq) > i+1 && seq[i+1].Operation != nil &&
+			seq[i+1].Operation.Name == "sha256" {
+			tx := &wire.MsgTx{}
+			tx.Deserialize(bytes.NewReader(current))
+			bitcoinTx = tx
+		}
+
 		current = inst.Operation.Apply(current, inst.Argument)
 	}
-	return current
+	return current, bitcoinTx
 }
 
 func (ts File) GetPendingSequences() []Sequence {
